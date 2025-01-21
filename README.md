@@ -18,7 +18,7 @@ The engine aims to:
 ## Core Features
 
 *   **Automated Text Processing Pipeline:** The engine processes a collection of research papers, extracts relevant information, and prepares it for analysis.
-*   **LLM-Powered Analysis:** Employs Large Language Models (LLMs) through either the Perplexity or OpenRouter API to perform in-depth analysis of individual publications based on a structured framework, mimicking the critical evaluation of a Nature/Science referee.
+*   **LLM-Powered Analysis:** Employs Large Language Models (LLMs) through OpenRouter API to perform in-depth analysis of individual publications based on a structured framework, mimicking the critical evaluation of a Nature/Science referee.
 *   **Topic Modeling with BERTopic:** Uses BERTopic, a state-of-the-art topic modeling technique, to cluster publications based on semantic similarity and identify key topics or categories of material intelligence [https://maartengr.github.io/BERTopic/].
 *   **Hierarchical Topic Analysis:** Explores hierarchical relationships between topics, revealing a structured understanding of the field.
 *   **Cluster Analysis and Evaluation:** Analyzes the characteristics of each cluster, generates descriptive titles and summaries using LLMs, and evaluates individual publications against cluster-specific criteria.
@@ -89,7 +89,7 @@ This is the main entry point for the program. It orchestrates the entire analysi
 *   Loading data from a Zotero library (PDFs and BibTeX metadata).
 *   Extracting text from PDFs using `pdfplumber`.
 *   Generating research prompts using a predefined template and the `generate_paper_prompt` function.
-*   Analyzing each publication using an LLM API (Perplexity or OpenRouter) via the `APIHandler` class.
+*   Analyzing each publication using an LLM API (OpenRouter) via the `APIHandler` class.
 *   Saving individual publication reports in Markdown and JSON formats using `save_presenter`.
 *   Performing BERTopic analysis on the collected reports.
 *   Generating visualizations of clusters, topic hierarchies, and evaluation results.
