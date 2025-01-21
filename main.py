@@ -50,9 +50,9 @@ from OpenRouter_Methods import get_openrouter_client, get_openrouter_response, l
 
 # --- Configuration ---
 DATA_SOURCE = "json_file"
-JSON_FILE_PATH = "../synthetic/publications3"
-TEMPLATE_FILE = "../Catechism/paper3.md"
-PERSPECTIVE_FILE = "../Catechism/Perspective2.md"
+JSON_FILE_PATH = "../synthetic/publications"
+TEMPLATE_FILE = "../Catechism/Paper_Template.md"
+PERSPECTIVE_FILE = "../Catechism/Perspective.md"
 CLUSTER_ANALYSIS_OUTPUT_DIR = "cluster_analysis_results"
 
 def analyze_material_intelligence(publications, template_sections, embedding_model):
