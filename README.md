@@ -257,8 +257,8 @@ The program will:
 ## Example Usage
 
 If you have:
-- A Zotero collection exported as `AI-3.bib`
-- Corresponding PDFs in an `AI-3` directory
+- A Zotero collection exported as `AI.bib`
+- Corresponding PDFs in an `AI` directory
 - Customized template files in the `Catechism` directory
 - Plan to use the OpenRouter API for LLM analysis
 
