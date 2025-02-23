@@ -1,11 +1,15 @@
+# OpenRouter_Methods.py (Handles BOTH OpenRouter and Gemini, with Retries)
 import os
 from openai import OpenAI
 import logging
 import json
 from pathlib import Path
 import time
-from typing import Optional
+from typing import Optional, Literal
 import backoff
+from utils import load_prompt  # Corrected import
+from google import genai #Corrected import
+import re
 
 def setup_logging(name=__name__):
     """Set up logging configuration."""
@@ -31,15 +35,15 @@ def get_openrouter_client():
 # Exponential backoff decorator for handling rate limits
 @backoff.on_exception(
     backoff.expo,
-    (Exception),  # You might want to specify exact exceptions
+    (Exception),  
     max_tries=5,  # Maximum number of retries
     max_time=300,  # Maximum total time to try in seconds
     giveup=lambda e: not (isinstance(e, Exception) and
         ('rate' in str(e).lower() or 'timeout' in str(e).lower())),
 )
 def get_openrouter_response_with_retry(client, prompt: str,
-                                     max_retries: int = 30,
-                                     retry_delay: int = 5) -> Optional[str]:
+                                     max_retries: int = 30, # Now using max_retries
+                                     retry_delay: int = 5) -> Optional[str]: # Using retry_delay
     """
     Get response from OpenRouter API with retry logic
 
@@ -56,7 +60,9 @@ def get_openrouter_response_with_retry(client, prompt: str,
     while retries < max_retries:
         try:
             response = client.chat.completions.create(
-                model="google/gemini-2.0-flash-exp:free",
+                #model="deepseek/deepseek-r1-distill-llama-70b:free",
+                model="google/gemini-2.0-flash-thinking-exp:free",
+                #model="google/gemini-2.0-pro-exp-02-05:free",
                 messages=[{"role": "user", "content": prompt}]
             )
 
@@ -65,6 +71,7 @@ def get_openrouter_response_with_retry(client, prompt: str,
                 return response.choices[0].message.content
 
             logging.warning(f"Empty or invalid response received, attempt {retries + 1}/{max_retries}")
+            print(response)
 
         except Exception as e:
             logging.error(f"❌ Error getting OpenRouter response (attempt {retries + 1}/{max_retries}): {e}")
@@ -86,32 +93,64 @@ def get_openrouter_response_with_retry(client, prompt: str,
     logging.error("❌ All retry attempts failed")
     return None
 
-def get_openrouter_response(client, prompt: str) -> str:
+def get_openrouter_response(client: OpenAI, prompt: str) -> str:
     """
     Main response function that handles retries and validates output
     """
-    response = get_openrouter_response_with_retry(client, prompt)
+    response = get_openrouter_response_with_retry(client, prompt, max_retries=30, retry_delay=5)
 
     if response is None:
         raise Exception("❌ Failed to get valid response after all retries")
 
     return response
 
-def load_prompt(file_path):
-    """
-    Loads a prompt from a text file.
-    """
+@backoff.on_exception(
+     backoff.expo,
+    (Exception),
+    max_tries=5,
+    max_time=300,
+    giveup=lambda e: not (isinstance(e, Exception) and
+        ('rate' in str(e).lower() or 'timeout' in str(e).lower() or 'internal' in str(e).lower())),
+)
+def get_gemini_response_with_retry(prompt: str) -> str:
+    """Gets response from Gemini API with retry logic, using backoff."""
+    google_api_key = os.getenv('GEMINI_API_KEY')
+    if not google_api_key:
+        raise ValueError("GEMINI_API_KEY environment variable not set.")
+    client = genai.Client(api_key=google_api_key) #CORRECT
     try:
-        with open(file_path, "r", encoding="utf-8") as file:
-            content = file.read().strip()
-            # Replace placeholders with actual content here, if necessary
-            return content
-    except FileNotFoundError:
-        print(f"❌ Error: Prompt file not found at {file_path}")
-        return None
+        response = client.models.generate_content(model="gemini-pro", contents=prompt) # Use gemini-pro
+        return response.text
     except Exception as e:
-        print(f"❌ Error loading prompt from {file_path}: {e}")
-        return None
+        logging.error(f"❌ Error getting Google Gemini response: {e}")
+        raise #Re-raise exception
+
+def get_gemini_response(prompt:str) -> str:
+    response = get_gemini_response_with_retry(prompt)
+    if response is None:
+        raise Exception("Failed to get a valid response after retries.")
+    return response
+
+# --- Unified LLM Response Function ---
+def get_llm_response(prompt: str, api_choice: Literal["google", "openrouter"]) -> str:
+    """Gets LLM response, handling API choice and cleaning."""
+    setup_logging() # call setup logging
+    if api_choice == "openrouter":
+        api_key = os.getenv('OPENROUTER_API_KEY')
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY environment variable not set.")
+        client = get_openrouter_client()
+        response_text = get_openrouter_response(client, prompt)
+
+    elif api_choice == "google":
+        response_text = get_gemini_response(prompt) # call the new gemini function.
+    else:
+        raise ValueError(f"Invalid API choice: {api_choice}")
+
+    if not response_text:
+        return ""
+
+    return response_text.strip() # Return the raw response
 
 def save_markdown_report(content: str, filepath: Path, title: str):
     """Save report in markdown format"""
