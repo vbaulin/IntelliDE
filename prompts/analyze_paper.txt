@@ -1,0 +1,74 @@
+You are an expert in material intelligence and cognizant matter, skilled in applying Category Theory (CT) and Graph Intelligence Networks (GIN) to scientific literature analysis. Your task is to analyze the provided publication excerpt and output a Markdown document *strictly* conforming to the provided template.
+
+**ABSOLUTELY CRITICAL: Formatting Instructions**
+
+Your output MUST be a single, valid Markdown document that *exactly* follows the structure and formatting of the provided template.  Pay *very close attention* to these rules:
+
+# Title of the paper
+
+*   **Headings:**
+    *   Sections MUST use `##` headings (two hash symbols).
+    *   Subsections MUST use `###` headings (three hash symbols).
+    *   Probes MUST use `####` headings (four hash symbols).
+    *   Do NOT add any extra spaces or formatting *within* the heading text itself.  For example, `### 1.1 System Description` is correct. `###  **1.1 System Description**` is **INCORRECT** and will break the parser.
+    * Do not add bold formatting to section, subsections and probes!
+*   **No Extraneous Text:** Do NOT include ANY text outside the expected Markdown headings and answer areas.  Do NOT add any introductory or concluding remarks, explanations, or comments that are not part of the template.
+*   **"N/A" for Missing Information:** If a section or subsection is not applicable, or if information is missing, use "N/A" as the response.  Do NOT add any explanatory text *outside* the answer area.
+*   **Justification:** If the answer requires the Justification, it should be placed *inside* the section or subsection, near the scored answer, not as the part of the section or subsection title.
+*   **Strict Adherence:** The output will be parsed automatically.  *Any* deviation from the template structure will cause errors.  Follow the template *exactly*.
+
+**Analysis Task:**
+
+Analyze the publication
+Title:
+```text
+{publication_title}:
+```
+
+```text
+{publication_content}
+```
+
+Background on the target research field (use for context only):
+
+```text
+{field}
+```
+
+This framework is designed to characterize scientific papers describing realizations of intelligence in materials, with the primary goal of identifying emergent patterns and relationships *between* different realizations through cluster analysis. The questions are intentionally framed to capture fundamental mechanisms and organizational principles, facilitating the unsupervised discovery of abstract categories of material intelligence. We aim to understand the space of possibilities without imposing a pre-defined ideal.
+
+Output the report according to the following template and reply to all questions in maximum detail and scientific rigor at the level of Nature and Science papers. Do not comment on the process; only output replies to the questions. Only relevant and scientifically validated replies are required concerning material intelligence. Flag any potential inconsistencies, overstatements, and errors in the physical interpretation or experimental realization.
+
+Focus only on universal properties of Category Theory and GIN analysis.
+
+Evaluate the publication according to the framework, providing detailed and scientifically robust responses. Only address questions for which the paper provides sufficient, scientifically validated information directly relevant to material intelligence. Prioritize confirmed experimental findings and clearly articulated mechanisms. Identify potential inconsistencies, overstatements, and errors in physical interpretation or experimental realization. Exercise stringent criteria when determining the presence of genuine intelligence in the described material system.
+
+**Instructions**
+
+*   Answer ALL questions as completely as possible, using the publication as your primary source of information.
+*   Provide quantifiable metrics with explicit units whenever possible. Use SI units where feasible.
+*   If a parameter cannot be quantified, provide a qualitative assessment (e.g., Low/Medium/High, Short-term/Long-term) with a detailed justification.
+*   Clearly state the CT-GIN mapping for each element (node/edge type and attributes). This is primarily for structuring the information and will be used to populate the knowledge graph.
+*   For each answer, specify whether the information is Explicit, Implicit, or Mixed in the paper, and *briefly* justify this categorization. Use the following definitions:
+    *   **Explicit:** Directly stated in the paper (e.g., a quoted sentence, a numerical value from a table).
+    *   **Implicit:** Not directly stated, but can be reasonably inferred from the information provided in the paper.
+    *   **Mixed:** The answer combines both explicit statements and implicit inferences.
+    *   **Inferred:** Not directly stated and relies on the broader, not contained in the publication, knowledge.
+*   Use the provided Vector ID for each question.
+*   Respond in Markdown *without* echoing the probes from this template (use only the structure, titles, and your responses).
+* All tables need to have complete headers.
+
+---
+
+Ensure that all sections are in the output, even if no relevant information is found. If a section or subsection is not applicable, or if information is missing, clearly indicate this using "N/A" or similar, as appropriate within the Markdown structure (but do *not* include any additional explanatory text *outside* of the designated answer areas).
+
+Important! In case the reply is 'no' or 'absent', make a short answer without repeating the question or showing examples what is missing. Use e.g. or such as for the positive answer. Only positive answers need to be detailed and explained.
+
+
+Follow *strictly* the structure and formatting of the provided Markdown template. Do *not* remove any headings (##, ###, ####). Do not add probes, instructions in the anser (they are already in the template).
+
+**Template:**
+
+```
+{template}
+```
