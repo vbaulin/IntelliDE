@@ -1,0 +1,5 @@
+Here is a description of a type of material intelligence:
+
+'{description}'
+
+Based on this description, generate a stricktly 3-5 word title of a specific type of material intelligence in this description without any formatting or additional words. Please do not include any special characters, quotation marks, or additional text beyond the 5 max word title for this description. Short but not truncated.
