@@ -1,0 +1,22 @@
+numpy
+ torch
+ transformers
+ scikit-learn
+ pathlib
+ bibtexparser
+ pdfplumber
+ openai
+ backoff
+ python-dotenv
+ google-generativeai #for gemini
+ tqdm
+ sentence-transformers
+ bertopic
+ umap-learn
+ matplotlib
+ networkx
+ seaborn
+ plotly
+ pandas
+ scipy
+ textblob
