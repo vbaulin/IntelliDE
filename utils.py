@@ -1,3 +1,4 @@
+# utils.py
 import os
 import re
 import json
@@ -6,11 +7,12 @@ import unicodedata
 import hashlib
 import numpy as np
 import logging
-import time
-import glob
-from typing import Dict, Union
-from sklearn.metrics.pairwise import cosine_distances
-import matplotlib.pyplot as plt
+from typing import Dict, Union, Any, Optional, List, Tuple
+from pathlib import Path
+import bibtexparser
+from bibtexparser.bparser import BibTexParser
+import pdfplumber
+
 
 EMBEDDING_CACHE_DIR = ".embedding_cache"
 EMBEDDING_CACHE_FILE = os.path.join(EMBEDDING_CACHE_DIR, "embeddings_cache.pkl")
@@ -26,82 +28,120 @@ def setup_logging(name=__name__):
         logger.addHandler(console_handler)
     return logger
 
-def clean_text(text):
+def load_template(template_file):
     """
-    Cleans text by removing special characters and extra whitespace.
-    """
-    if not isinstance(text, str):
-        return ""
-    text = unicodedata.normalize('NFKD', text)
-    text = "".join(c for c in text if unicodedata.category(c) != 'Mn')
-    text = re.sub(r"[^a-zA-Z0-9\s]", "", text)  # Remove non-alphanumeric
-    text = re.sub(r"\s+", " ", text).strip()  # Normalize whitespace
-    return text
-
-def load_data_from_json(json_file_path):
-    """
-    Loads data from JSON files, handling the new folder structure.
-    """
-    all_data = []
-    for folder_name in os.listdir(json_file_path):
-        folder_path = os.path.join(json_file_path, folder_name)
-        if os.path.isdir(folder_path):
-            json_files = glob.glob(os.path.join(folder_path, "*.json"))
-            for file in json_files:
-                try:
-                    with open(file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        all_data.append(data)  # Ensure each file's content is a single item in the list
-                except UnicodeDecodeError:
-                    try:
-                        with open(file, "r", encoding="latin-1") as f:
-                            data = json.load(f)
-                            all_data.append(data)
-                    except Exception as e:
-                        print(f"❌ Error reading file {file}: {e}")
-                except Exception as e:
-                    print(f"❌ Error reading file {file}: {e}")
-    return all_data
-
-def save_topic_tree(tree, filename="topic_tree.pickle"):
-    """
-    Saves the topic tree data from a BERTopic model to a file using pickle.
-
-    Args:
-        topic_model: The fitted BERTopic model.
-        filename: The name of the file to save the topic tree to.
+    Loads the template structure from the specified Markdown file.
     """
     try:
-
-
-        with open(filename, "w") as f:
-            pickle.dump(tree, f)
-
-        print(f"✅ Topic tree saved to {filename}")
-
-    except Exception as e:
-        print(f"❌ Error saving topic tree: {e}")
-
-def read_markdown_file(filepath):
-    """
-    Reads the content of a markdown file.
-
-    Args:
-        filepath: Path to the markdown file.
-
-    Returns:
-        The content of the file as a string, or None if an error occurred.
-    """
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return f.read()
+        with open(template_file, 'r', encoding='utf-8') as f:
+            return f.read() #return as a string
+        print("✅ Template loaded successfully!")
     except FileNotFoundError:
-        print(f"❌ Error: Markdown file not found at {filepath}")
+        print(f"❌ Error: Template file not found at {template_file}")
         return None
     except Exception as e:
-        print(f"❌ Error reading markdown file: {e}")
+        print(f"❌ Error loading template: {e}")
         return None
 
+def extract_pdf_text(pdf_file: str) -> str:
+    try:
+        text_content = []
+        with pdfplumber.open(pdf_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    text_content.append(text)
+        return "\n".join(text_content)
+    except Exception as e:
+        print(f"❌ An error occurred while reading the PDF: {e}")
+        return ""
+
+def parse_bib_file(INPUT_DIR, bib_file_path: str) -> Dict:
+    """
+    Parse the BibTeX file and extract relevant information.
+    """
+    presenters = {}
+    logger = logging.getLogger(__name__)
+    logger.info(f"Parsing BibTeX file: {bib_file_path}")
+
+    try:
+        with open(bib_file_path, 'r', encoding='utf-8') as bib_file:
+            parser = BibTexParser()
+            bib_database = bibtexparser.loads(bib_file.read(), parser=parser)
+        logger.info(f"BibTeX file parsed, {len(bib_database.entries)} entries found.")
+
+        for entry in bib_database.entries:
+            key = entry.get('ID', 'unknown_key')
+            #logger.info(f"--- Processing BibTeX entry: {key} ---")  # DEBUG
+            pdf_path = entry.get('file', '')
+            #logger.info(f"  Raw 'file' field: {pdf_path}")  # DEBUG
+            if 'file' in entry and entry['file']:
+                 try:
+                     pdf_path_raw = entry.get('file', '')
+                     pdf_path_split = pdf_path_raw.split(':')
+                     if len(pdf_path_split) > 1:
+                         pdf_path = pdf_path_split[1].strip()
+                     else:
+                         pdf_path = pdf_path_split[0].strip()
+                     pdf_path = os.path.join(INPUT_DIR, pdf_path)
+                     #logger.info(f"  Extracted pdf_path: {pdf_path}")  # DEBUG
+                 except Exception as e:
+                     logger.error(f" ❌ Error processing 'file' field: {e}")
+                     pdf_path = 'N/A'
+            else:
+                pdf_path = 'N/A'
+                #logger.warning(f"  No 'file' field found or empty for {key}, setting pdf_path to N/A")
+
+
+            presenters[key] = {
+                'name': entry.get('author', 'Unknown Author'),
+                'title': entry.get('title', 'Unknown Title').replace('{', '').replace('}', '').replace('/', ' '),
+                'year': entry.get('year', 'Unknown Year'),
+                'doi': entry.get('doi', 'N/A'),
+                'pdf_path': pdf_path,
+                'key': key,
+                "authors": entry.get('author', 'Unknown Author'),
+            }
+    except Exception as e:
+        logger.error(f"Error reading BibTeX file: {e}")
+        return {} # Return empty dict if error
+
+    if not presenters:
+        logger.warning("❌ No data extracted from the BibTeX file. Please check its structure.")
+
+    return presenters
+
+def save_markdown_report(content: str, filepath: Path, title: str):
+    """Save report in markdown format"""
+    try:
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(f"# {title}\n\n")
+            f.write(content)
+
+    except Exception as e:
+        logging.error(f"❌ Error saving markdown report: {e}")
+        raise
+
+def save_json_report(content: str, filepath: Path, metadata: dict):
+    """Save report in JSON format"""
+    try:
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "metadata": metadata,
+            "content": content
+        }
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    except Exception as e:
+        logging.error(f"❌ Error saving JSON report: {e}")
+        raise
 
 def load_prompt(file_path):
     """
@@ -117,234 +157,263 @@ def load_prompt(file_path):
         print(f"❌ Error loading prompt from {file_path}: {e}")
         return None
 
-def load_template(template_file):
-    """
-    Loads the template structure from the specified Markdown file,
-    generating unique keys for each section and subsection.
-    """
-    template_sections = {}
-    section_counter = 0
-    subsection_counter = 0
-
-    with open(template_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("## "):
-                current_section = line[3:].strip()
-                section_counter += 1
-                section_key = f"section_{section_counter}"
-                template_sections[section_key] = {
-                    "name": current_section,
-                    "subsections": {},
-                }
-                current_subsection = None
-                subsection_counter = 0  # Reset subsection counter for each section
-                print(f"Loaded section: {section_key} - {current_section}")
-            elif line.startswith("### "):
-                current_subsection = line[4:].strip()
-                current_subsection = current_subsection.replace(" [Text]", "")
-
-                subsection_counter += 1  # Increment subsection counter
-                subsection_key = f"{section_key}_subsection_{subsection_counter}"
-
-                if current_section:
-                    template_sections[section_key]["subsections"][
-                        subsection_key
-                    ] = current_subsection
-                    print(f"  Loaded subsection: {subsection_key} - {current_subsection}")
-
-    print("✅ Template loaded successfully!")
-    return template_sections
-
-def get_embedding(text, embedding_model, pub_key, section_key, subsection_key):
-    """
-    Generates an embedding for a given text using the specified model.
-    Caches the embeddings to a single Pickle file to avoid redundant computations.
-    """
-    if not isinstance(text, str) or not text.strip():
+def read_description(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            description = file.read().strip()
+        return description
+    except FileNotFoundError:
+        print(f"❌ Error: File {file_path} not found")
         return None
-
-    # Ensure the cache directory exists
-    os.makedirs(EMBEDDING_CACHE_DIR, exist_ok=True)
-
-    # Get a shortened model name using hashing
-    try:
-        model_name = embedding_model._first_module().config._name_or_path
-    except (AttributeError, StopIteration):
-        model_name = "default_model_name"
-    model_name_hash = hashlib.sha256(model_name.encode()).hexdigest()[:16]
-
-    # Create a unique key for the text based on its hash and the model name hash
-    text_hash = hashlib.sha256(text.encode()).hexdigest()
-    cache_key = f"{text_hash}_{model_name_hash}"
-
-    # Load the cache if it exists
-    cache = {}
-    if os.path.exists(EMBEDDING_CACHE_FILE):
-        try:
-            with open(EMBEDDING_CACHE_FILE, "rb") as f:
-                cache = pickle.load(f)
-        except Exception as e:
-            print(f"❌ Error loading cache from {EMBEDDING_CACHE_FILE}: {e}")
-            cache = {}
-
-    # Check if the embedding is present in the cache and if the pub_key, section_key, and subsection_key exist
-    if pub_key in cache and section_key in cache[pub_key] and subsection_key in cache[pub_key][section_key] and cache_key in cache[pub_key][section_key][subsection_key]:
-        try:
-            embedding = cache[pub_key][section_key][subsection_key][cache_key]
-            #print(f"✅ Loaded embedding from cache for text: '{text[:50]}...'")
-            return embedding
-        except Exception as e:
-            print(f"❌ Error loading embedding from cache: {e}")
-
-    # Generate embedding if not found in cache
-    try:
-        embedding = embedding_model.encode(text, convert_to_numpy=True)
     except Exception as e:
-        print(f"❌ Error generating embedding: {e}")
+        print(f"❌ Error reading file: {e}")
         return None
 
-    # Store the embedding in the cache
-    if pub_key not in cache:
-        cache[pub_key] = {}
-    if section_key not in cache[pub_key]:
-        cache[pub_key][section_key] = {}
-    if subsection_key not in cache[pub_key][section_key]:
-        cache[pub_key][section_key][subsection_key] = {}
-    cache[pub_key][section_key][subsection_key][cache_key] = embedding
-
-    # Save the updated cache to the file
-    try:
-        with open(EMBEDDING_CACHE_FILE, "wb") as f:
-            pickle.dump(cache, f)
-        #print(f"✅ Embedding generated and cached for text: '{text[:50]}...'")
-    except (pickle.PicklingError, OSError) as e:
-        print(f"❌ Error saving embedding to cache: {e}")
-
-    return embedding
-
-def combine_embeddings(
-    embeddings: Dict[str, Union[np.ndarray, None]]
-) -> np.ndarray:
-    """
-    Combines embeddings, handling None values.
-
-    Parameters
-    ----------
-    embeddings : Dict[str, Union[np.ndarray, None]]
-        Dictionary mapping keys to embeddings (or None).
-
-    Returns
-    -------
-    np.ndarray
-        Combined embedding vector.
-    """
-    valid_embeddings = [e for e in embeddings.values() if e is not None]
-
-    if not valid_embeddings:
-        return np.array([])  # Return empty array if all embeddings are None
-
-    if len(valid_embeddings) == 1:
-        return valid_embeddings[0]  # Return the single embedding if only one is valid
-
-    # Concatenate valid embeddings
-    combined_embedding = np.concatenate(valid_embeddings)
-
-    return combined_embedding
-
-def extract_answers(publication, template_sections):
-    """
-    Extracts answers based on the order of sections and subsections in the template,
-    ignoring any numbering discrepancies in the JSON content.
-    Handles subsection content ending with newline characters.
-    Prints only warnings and errors.
-    """
-    answers = {}
-    content = publication.get("content", "").replace('\\n', '\n')
-    pub_key = publication.get('metadata', {}).get('key')
-
-    section_index = 0
-    for section_key, section_data in template_sections.items():
-        section_index += 1
-        section_name = section_data["name"]
-        answers[section_key] = {}
-        #print(f"  - Looking for section: {section_index}. {section_name}")
-
-        subsection_index = 0
-        header_start_index = 0  # Start searching from the beginning of the content
-
-        for subsection_key, subsection_name in section_data["subsections"].items():
-            subsection_index += 1
-            #print(f"    -- Looking for subsection: {section_index}.{subsection_index}. {subsection_name}")
-
-            # Find the start of the next subsection header (###)
-            header_start_index = content.find("###", header_start_index)
-
-            if header_start_index != -1:
-                #print(f"      -- Found subsection header start at index: {header_start_index}")
-
-                # Find the end of the subsection header (newline)
-                header_end_index = content.find("\n", header_start_index + 3)
-                if header_end_index == -1:
-                    print(f"      -- ⚠️ Warning: Could not find end of header for subsection {subsection_key} in publication {pub_key}")
-                    header_start_index += 3
-                    continue
-
-                # Find the end of the subsection (next header or end of content)
-                end_index = len(content)
-                for next_header_tag in ["###", "##", "#"]:
-                    next_header_index = content.find(next_header_tag, header_end_index + 1)
-                    if next_header_index != -1 and next_header_index < end_index:
-                        end_index = next_header_index
-                #print(f"      -- Found subsection end at index: {end_index}")
-
-                # Extract the answer text, handling trailing newline
-                answer_text = content[header_end_index + 1:end_index].strip() # Skip the header title
-                if answer_text.endswith('\n'):
-                    answer_text = answer_text[:-1].strip()
-                #print(f"      -- Extracted raw answer text:\n'{answer_text}'")
-
-                # Check for numbering mismatch
-                extracted_numbering = re.search(r"(\d+\.\d+)\.\s", answer_text)
-                if extracted_numbering:
-                    extracted_numbering = extracted_numbering.group(1)
-                    expected_numbering = f"{section_index}.{subsection_index}"
-                    if extracted_numbering != expected_numbering:
-                        print(f"      -- ⚠️ Warning: Numbering mismatch. Expected {expected_numbering}, found {extracted_numbering} in publication {pub_key}")
-
-                # Clean and store the answer
-                cleaned_answer = clean_text(answer_text)
-                if cleaned_answer:
-                    answers[section_key][subsection_key] = cleaned_answer
-                    #print(f"      -- ✅ Successfully extracted and stored subsection text.")
+def extract_paper_type(publication_content: str) -> str:
+    """Extracts the paper type from the publication content."""
+    content_lines = publication_content.splitlines()
+    for i, line in enumerate(content_lines):
+        if "__Paper Type:__" in line:
+            # Extract everything after the marker on the same line.
+            after_marker = line.split("__Paper Type:__")[-1].strip()
+            if after_marker:
+                # Check if it's enclosed in square brackets.
+                match = re.search(r"\[(.*?)\]", after_marker)
+                if match:
+                    return match.group(1).lower()
                 else:
-                    print(f"      -- ⚠️ Warning: Extracted text is empty after cleaning for subsection {subsection_key} in publication {pub_key}")
+                    return after_marker.lower()
+            # If nothing is found after the marker on the same line,
+            # then check the following lines.
+            for next_line in content_lines[i + 1:]:
+                next_line = next_line.strip()
+                if not next_line or next_line.startswith("---") or next_line.startswith("*"):
+                    continue
+                match = re.search(r"\[(.*?)\]", next_line)
+                if match:
+                    return match.group(1).lower()
+                else:
+                    return next_line.lower()
+    return "Unknown"  # Default if not found
 
-                header_start_index = end_index  # Move past the current subsection
+def generate_paper_prompt(prompt, template, field_context, publication: Dict) -> str:
+    """Generate research prompt using the external prompt file."""
 
-            else:
-                answers[section_key][subsection_key] = ""
-                print(f"      -- ❌ Warning: Could not find subsection {section_index}.{subsection_index} in publication {pub_key}")
+    prompt_template = load_prompt(prompt)  # Load from file
+    if not prompt_template:
+        return ""  # Return empty string if loading fails
 
-    # print(f"✅ Successfully extracted content from publication: {pub_key}.")
-    return answers
+    # --- Check for content FIRST ---
+    if not publication.get('content') or publication['content'] == "No content available":
+        print("❌ No content available, cannot generate prompt")
+        return ""  # Return empty string if no content
 
-def plot_within_cluster_distances(label, llm_cluster_title, keys, distances, template_sections):
+    # --- If we get here, we HAVE content ---
+    paper_content = publication['content']
+    field = read_description(field_context)  # Load field context
+    catechism_template = read_description(template)  # Load template
+
+    if not field or not catechism_template:
+        print("❌ Could not load required files (field/catechism) for prompt generation.")
+        return ""
+
+    # Use .format() for clarity and safety
+    # Changed 'catechism_template' to 'template' to match prompt file
+    return prompt_template.format(
+        publication_title=publication['title'],
+        publication_content=paper_content,
+        field=field,
+        template=catechism_template  # <-- Changed key to 'template'
+    )
+
+def get_vector_by_key(cache: Dict[str, Any], full_key: str) -> Optional[List[float]]:
+    """Retrieves a specific vector from the cache using its full key (pub_key_section_...)."""
+    try:
+        parts = full_key.split("_")
+        pub_key = parts[0]
+        if pub_key not in cache:
+            return None
+
+        if len(parts) == 1:  # Just publication key.  Corrected this.
+            return cache[pub_key]["embeddings"].get(pub_key) # <--- Correct retrieval
+        elif len(parts) == 3:  # Publication and Section
+            section_key = parts[2]
+            return cache[pub_key]["embeddings"].get(f"section_{section_key}")
+        elif len(parts) == 4: # Publication, Section, Subsection
+            section_key = parts[2]
+            subsection_key = parts[3]
+            return cache[pub_key]["embeddings"].get(f"section_{section_key}_{subsection_key}")
+        elif len(parts) == 5: # Publication, Section, Subsection, Probe
+            section_key = parts[2]
+            subsection_key = parts[3]
+            probe_key = parts[4]
+            return cache[pub_key]["embeddings"].get(f"section_{section_key}_{subsection_key}_{probe_key}")
+        else:
+            return None  # Invalid key format
+
+    except KeyError:
+        return None  # Handle cases where keys are missing
+    except Exception as e: #general exception
+        print(f"An unexpected error occurred: {e}")
+        return None
+
+
+def get_text_by_key(cache: Dict[str, Any], full_key: str) -> Optional[str]:
+    """Retrieves the text associated with a specific key."""
+    parts = full_key.split("_")
+    pub_key = parts[0]
+
+    if pub_key not in cache:
+        return None
+    try:
+        if len(parts) == 1:
+            return cache[pub_key]['metadata']['title'] # Return the title of publication
+        elif len(parts) == 3:  # Publication and Section
+            section_key = parts[2]
+            return cache[pub_key]["sections"][section_key]["text"]
+        elif len(parts) == 4: # Publication, Section, Subsection
+            section_key = parts[2]
+            subsection_key = parts[3]
+            return cache[pub_key]["sections"][section_key]["subsections"][subsection_key]["text"]
+        elif len(parts) == 5: # Publication, Section, Subsection, Probe
+            section_key = parts[2]
+            subsection_key = parts[3]
+            probe_key = parts[4]
+            return cache[pub_key]["sections"][section_key]["subsections"][subsection_key]["probes"][probe_key]["text"]
+        else:
+            return None
+    except KeyError:
+        return None
+    except Exception as e: #general exception
+        print(f"An unexpected error occurred: {e}")
+        return None
+
+def filter_vectors(
+    cache: Dict[str, Any],
+    paper_type: Optional[str] = None,
+    min_score: Optional[Dict[str, float]] = None,
+    max_results: Optional[int] = None,
+) -> List[str]:
     """
-    Plots the distribution of distances within a single cluster.
-    Simplified to accept pre-calculated distances.
+    Filters vectors in the cache based on metadata and score criteria.
+
+    Args:
+        cache: The loaded embedding cache.
+        paper_type:  Optional paper type to filter by (e.g., "Experimental").
+        min_score: Optional dictionary of {probe_key: min_score}.
+        max_results: Optional maximum number of results (for future use, if needed).
+    Returns:
+        A list of full_keys (str) of the filtered vectors.
     """
-    if not distances:
-        print(f"No distances data available for cluster {label}.")
-        return
 
-    # Convert distances dictionary to a list of float values
-    distances_list = [float(value) for value in distances.values()]
+    filtered_keys = []
 
-    plt.figure()
-    plt.hist(distances_list, bins=20, color="skyblue", edgecolor="black")
-    plt.title(f"Distribution of Distances within Cluster {label}: {llm_cluster_title}")
-    plt.xlabel("Cosine Distance")
-    plt.ylabel("Number of Publications")
-    plt.grid(True)
-    plt.show()
+    for pub_key, pub_data in cache.items():
+        # Filter by paper_type (if provided)
+        if paper_type and pub_data["metadata"].get("paper_type") != paper_type:
+            continue
+
+        # Iterate through all possible keys (sections, subsections, probes)
+        for section_key, section_data in pub_data["sections"].items():
+            for subsection_key, subsection_data in section_data["subsections"].items():
+                for probe_key, probe_data in subsection_data["probes"].items():
+                    full_key = f"{pub_key}_{section_key}_{subsection_key}_{probe_key}"
+
+                    # Filter by score (if provided)
+                    if min_score:
+                        for score_key, score_threshold in min_score.items():
+                            # Check if this probe matches the score_key
+                            if score_key in probe_key: #Use "in" to find in a full name of probe
+                                probe_score = probe_data.get("score")
+                                if probe_score is None or probe_score < score_threshold:
+                                    break  # Skip this vector
+                        else:
+                            # All score criteria met (or no score criteria)
+                            filtered_keys.append(full_key)
+                    else:
+                        # No score criteria, so include the key
+                        filtered_keys.append(full_key)
+
+        if max_results and len(filtered_keys) >= max_results: #Added to be compatible
+            break
+    # Apply max_results (if provided)
+    if max_results:
+        return filtered_keys[:max_results]
+    else:
+        return filtered_keys
+
+def parse_markdown_output(markdown_text: str) -> Dict[str, Any]:
+    """Parses Markdown, extracting sections, subsections, probes, scores, and justifications."""
+    logger = logging.getLogger(__name__)
+    logger.debug("--- Starting parse_markdown_output (REVISED LOGIC) ---")
+    sections = {}
+    current_section = None
+    current_subsection = None
+    current_probe = None
+    subsection_regex = r"^###\s+\**(\d*\.*\d*\s*[\w\s\d\.\:\-]+?)\**(?:\s|$)"
+
+    lines = markdown_text.splitlines()
+
+    for line_number, line in enumerate(lines, 1):
+        stripped_line = line.strip()
+        original_line = line  # Keep original line for text accumulation
+        logger.debug(f"Line {line_number}: '{stripped_line}'")
+
+        # Match Section (##)
+        if section_match := re.match(r"^##\s+(.+)$", stripped_line):
+            current_section = section_match.group(1).strip()
+            sections[current_section] = {
+                "subsections": {},
+                "text": ""  # Initialize section text
+            }
+            current_subsection = None
+            current_probe = None
+            logger.debug(f"✅ Section MATCH: '{current_section}'")
+            continue
+
+        # Match Subsection (###)
+        if current_section and (subsection_match := re.match(subsection_regex, stripped_line)):
+            current_subsection = subsection_match.group(1).strip()
+            sections[current_section]["subsections"][current_subsection] = {
+                "probes": {},
+                "text": ""  # Initialize subsection text
+            }
+            current_probe = None
+            logger.debug(f"  ✅ Subsection MATCH: '{current_subsection}'")
+            continue
+
+        # Match Probe (####)
+        if current_section and current_subsection and (probe_match := re.match(r"^####\s*(.+?)\s*$", stripped_line)):
+            current_probe = probe_match.group(1).strip()
+            sections[current_section]["subsections"][current_subsection]["probes"][current_probe] = {
+                "text": "",
+                "score": None,
+                "justification": ""
+            }
+            logger.debug(f"    ✅ Probe MATCH: '{current_probe}'")
+            continue
+
+        # Text accumulation logic
+        if current_probe:
+            # Add to probe text
+            sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["text"] += original_line + "\n"
+            logger.debug(f"      📝 Probe text: {current_probe}")
+
+            # Extract score and justification ONLY if we are inside a probe
+            if score_match := re.search(r"Score:\s*(\d+)", original_line):
+                sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["score"] = int(score_match.group(1))
+            if justification_match := re.search(r"Justification:\s*(.*)", original_line, re.IGNORECASE):
+                sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["justification"] = justification_match.group(1).strip()
+
+        elif current_subsection:
+            # Add to subsection text
+            sections[current_section]["subsections"][current_subsection]["text"] += original_line + "\n"
+            logger.debug(f"    📝 Subsection text: {current_subsection}")
+
+        elif current_section:
+            # Add to section text
+            sections[current_section]["text"] += original_line + "\n"
+            logger.debug(f"  📝 Section text: {current_section}")
+
+    logger.debug(f"Parsing complete. Found {len(sections)} sections")
+    return sections
