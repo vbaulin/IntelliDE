@@ -1,16 +1,20 @@
+# analysis.py
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 from umap import UMAP
+import networkx as nx
+import re
 from sentence_transformers import SentenceTransformer
 from bertopic import BERTopic
+from transformers import AutoTokenizer, AutoModel  # For SciBERT
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_distances
 from sklearn.metrics.pairwise import cosine_similarity
 from textblob import TextBlob
 from collections import Counter
 from typing import Optional, Union, List, Tuple, Dict
-from utils import load_prompt, read_markdown_file
+from utils import load_prompt, read_description
 import logging
 import os
 import json
@@ -24,7 +28,7 @@ from OpenRouter_Methods import get_openrouter_client, get_openrouter_response, s
 # --- File Paths ---
 CLUSTER_ANALYSIS_OUTPUT_FILE = "cluster_analysis_material_intelligence.md"
 PERFORM_CLUSTERING_TITLE_PROMPT_FILE = "perform_clustering_prompt_short.txt"
-PERFORM_CLUSTERING_PROMPT_FILE = "perform_clustering_prompt.txt"
+PERFORM_CLUSTERING_PROMPT_FILE = "perform_clustering_prompt.txt"  # Modified prompt!
 CLUSTER_ANALYSIS_OUTPUT_DIR = "cluster_analysis_results"
 CLUSTER_ANALYSIS_OUTPUT_FILE = "cluster_analysis_material_intelligence.md"
 
@@ -158,7 +162,8 @@ def analyze_clusters(
 
 def perform_bertopic_analysis(
     text_data: List[str],
-    embedding_model: Union[str, SentenceTransformer] = "all-mpnet-base-v2",
+    embedding_model: Union[str, SentenceTransformer, AutoModel] = "allenai/scibert_scivocab_uncased",
+    vectorizer_model: Optional[CountVectorizer] = None,
     min_topic_size: int = 5,
     n_gram_range: Tuple[int, int] = (1, 3),
     seed: Optional[int] = 42,
@@ -166,16 +171,19 @@ def perform_bertopic_analysis(
     from bertopic import BERTopic
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     logger = logging.getLogger(__name__)
-    vectorizer_model = CountVectorizer(
-        ngram_range=n_gram_range, stop_words="english"
-    )
+
+    # Use the provided vectorizer_model or create a default one
+    if vectorizer_model is None:
+        vectorizer_model = CountVectorizer(ngram_range=n_gram_range, stop_words="english")
+
     umap_model = UMAP(
         n_neighbors=15,
-        n_components=20,
-        min_dist=0.4,
+        n_components=25,
+        min_dist=0.5,
         metric="cosine",
         random_state=seed,
     )
+
     topic_model = BERTopic(
         embedding_model=embedding_model,
         umap_model=umap_model,
@@ -185,6 +193,7 @@ def perform_bertopic_analysis(
         calculate_probabilities=True,
         verbose=True,
     )
+
     try:
         if any(not isinstance(doc, str) or not doc.strip() for doc in text_data):
             raise ValueError("All documents must be non-empty strings.")
@@ -206,70 +215,125 @@ def calculate_topic_probabilities(combined_probs, publication_keys):
             for topic_id, prob in sorted_probs:
                 print(f"  Topic {topic_id}: {prob:.4f}")
 
-def visualize_topic_hierarchy(combined_model, combined_texts, topic_labels):
+def sanitize_label_for_graphviz(label):
+    """
+    Sanitizes a label to be compatible with Graphviz by removing problematic
+    characters and shortening it.
+    """
+    label = re.sub(r'[\\/*?:"<>|]', "", label)  # Remove invalid file name characters
+    label = re.sub(r'\s+', '_', label)  # Replace whitespace with underscores
+    label = label.encode('ascii', 'ignore').decode('ascii')  # Remove non-ASCII characters
+
+    if not label:
+        label = "EmptyLabel"
+    return label[:50]  # Truncate to a reasonable length
+
+def visualize_topic_hierarchy(combined_model, combined_texts, topic_labels, save_path='hierarchy.png'):
+    """Generates vertical hierarchical visualization of topics with LLM titles."""
     try:
-        # Generate the hierarchical topics data
+        # 1. Get hierarchical structure
         hierarchical_topics = combined_model.hierarchical_topics(docs=combined_texts)
 
-        # Create the hierarchy visualization using BERTopic's built-in function
-        fig = combined_model.visualize_hierarchy(hierarchical_topics=hierarchical_topics)
+        # 2. Create directed graph
+        graph = nx.DiGraph()
+        for _, row in hierarchical_topics.iterrows():
+            parent_id = row['Parent_ID']
+            child_id = row['Child_ID']
 
-        # Update node labels with LLM-generated titles from topic_labels
-        for trace in fig.data:
-            if trace.mode == 'markers+text':  # Check if it's a node trace
-                updated_labels = []
-                for label in trace.text:
-                    try:
-                        # Check if the label can be converted to an integer (topic ID)
-                        topic_id = int(label.split('_')[0])  # Assuming label format is "0_topic"
-                        # Get the corresponding title from topic_labels
-                        updated_label = topic_labels.get(topic_id, label)
-                        updated_labels.append(updated_label)
-                    except ValueError:
-                        # If the label is not an integer, keep the original label
-                        updated_labels.append(label)
-                trace.text = updated_labels
-                trace.textposition = 'middle center'  # Ensure text is centered
+            # Get LLM-generated titles
+            parent_title = topic_labels.get(parent_id, f"Cluster_{parent_id}")
+            child_title = topic_labels.get(child_id, f"Cluster_{child_id}")
 
-        # Customize layout
+            # Sanitize for Graphviz compatibility
+            parent_title = sanitize_label_for_graphviz(parent_title)
+            child_title = sanitize_label_for_graphviz(child_title)
+
+            graph.add_edge(parent_title, child_title)
+
+        # 3. Graphviz layout configuration
+        pos = nx.nx_agraph.graphviz_layout(graph, prog='dot', args="-Grankdir=TB -Gnodesep=1.0 -Granksep=2.0")
+
+        # 4. Plotly visualization
+        fig = go.Figure()
+
+        # Add edges
+        for edge in graph.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            fig.add_trace(go.Scatter(
+                x=[x0, x1, None],
+                y=[y0, y1, None],
+                mode='lines',
+                line=dict(color='#888', width=1),
+                hoverinfo='none'
+            ))
+
+        # Add nodes
+        for node in graph.nodes():
+            x, y = pos[node]
+            fig.add_trace(go.Scatter(
+                x=[x],
+                y=[y],
+                mode='markers+text',
+                marker=dict(size=20, color='lightblue'),
+                text=node,
+                textposition="middle center",
+                hoverinfo='text',
+                textfont=dict(size=12)
+            ))
+
+        # 5. Configure layout
         fig.update_layout(
-            title="Topic Hierarchy",
-            title_x=0.5,
-            showlegend=True,
-            margin=dict(l=40, r=40, b=85, t=100),
-            plot_bgcolor='white'
+            title='Topic Hierarchy with LLM-Generated Titles',
+            showlegend=False,
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            margin=dict(t=100, b=20),
+            height=800,
+            width=1200
         )
 
+        # 6. Save and display
+        fig.write_image(save_path)
+        print(f"✅ Hierarchy saved to {save_path}")
         fig.show()
 
     except Exception as e:
-        print(f"Error generating hierarchical topics visualization: {e}")
+        print(f"❌ Hierarchy generation failed: {e}")
 
 def visualize_topic_similarity(combined_model, topic_labels):
+    """Visualizes topic similarity matrix with LLM-generated titles."""
     try:
         # Get the similarity matrix
         similarity_matrix = combined_model.visualize_heatmap()
-
-        # Extract topic IDs and map them to LLM titles
+        # Extract topic IDs and map to LLM titles
         topic_ids = [int(label) for label in combined_model.get_topic_info().Topic if label != -1]
-        llm_titles = [topic_labels.get(topic_id, f"Cluster {topic_id}") for topic_id in topic_ids]
-
-        # Update the figure to use LLM titles instead of topic numbers
-        fig = go.Figure(data=go.Heatmap(z=similarity_matrix.data[0].z,  # Access the z-data correctly
-                                       x=llm_titles,
-                                       y=llm_titles,
-                                       colorscale='Viridis'))
-
-        fig.update_layout(title='Topic Similarity Matrix with LLM Titles',
-                          xaxis_title="Topic",
-                          yaxis_title="Topic",
-                          yaxis=dict(scaleanchor="x", scaleratio=1))  # Make y-axis scale match x-axis
-
+        llm_titles = [topic_labels.get(tid, f"Cluster {tid}") for tid in topic_ids]
+        # Create interactive heatmap
+        fig = go.Figure(data=go.Heatmap(
+            z=similarity_matrix.data[0].z,
+            x=llm_titles,
+            y=llm_titles,
+            colorscale='Viridis',
+            texttemplate="%{z:.2f}",
+            hoverinfo="x+y+z"
+        ))
+        # Configure layout
+        fig.update_layout(
+            title='Topic Similarity Matrix with LLM Titles',
+            xaxis_title="Topics",
+            yaxis_title="Topics",
+            width=1000,
+            height=1000,
+            xaxis=dict(tickangle=45, tickfont=dict(size=10)),
+            yaxis=dict(tickfont=dict(size=10)),
+            margin=dict(l=100, r=100, b=150, t=100)
+        )
         fig.show()
+    except Exception as e:
+        print(f"❌ Error visualizing similarity matrix: {e}")
 
-    except ValueError as e:
-        print(f"Error visualizing topics heatmap: {e}")
-        print("This may occur if topic frequencies are too low or not computed.")
+
 
 def analyze_topic_evolution(combined_model, combined_texts, combined_labels, timestamps):
     if combined_model and all(timestamps):
@@ -305,6 +369,70 @@ def analyze_topic_distribution_by_section(template_sections, publication_keys, c
         for topic_id, count in section_topic_distribution[section_key].most_common():
             percentage = (count / total_topics) * 100 if total_topics > 0 else 0
             print(f"  Topic {topic_id}: {count} ({percentage:.2f}%)")
+
+def save_topic_tree_to_markdown(combined_model, topic_labels, combined_texts, filename="topic_tree.md"):
+    try:
+        hierarchical_topics = combined_model.hierarchical_topics(combined_texts)
+        tree = combined_model.get_topic_tree(hierarchical_topics)
+
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("# Topic Hierarchy\n\n")
+
+            current_level = 0
+            stack = []
+
+            for line in tree.split('\n'):
+                if not line.strip():
+                    continue
+
+                level = line.count('\t')
+                content = line.strip().split('_')[0]
+                topic_id = int(content.split(')')[0]) if ')' in content else -1
+                llm_title = topic_labels.get(topic_id, content)
+
+                # Generate proper markdown hierarchy
+                if level > current_level:
+                    f.write("\n" + "  "*(level-1) + "<ul>\n")
+                    current_level = level
+                elif level < current_level:
+                    f.write("  "*current_level + "</ul>\n")
+                    current_level = level
+
+                f.write("  "*level + f"<li>{llm_title}</li>\n")
+
+            # Close remaining list tags
+            while current_level > 0:
+                f.write("  "*(current_level-1) + "</ul>\n")
+                current_level -= 1
+    except Exception as e:
+            print(f"❌ Error saving topic tree: {e}")
+
+def calculate_average_similarity(topic_model, topic_labels):
+    try:
+        # Get similarity matrix directly from model
+        similarity_matrix = topic_model.get_similarity_matrix()
+
+        # Validate matrix shape matches labels
+        if similarity_matrix.shape[0] != len(topic_labels):
+            raise ValueError("Mismatch between similarity matrix and topic labels")
+
+        num_topics = similarity_matrix.shape[0]
+        avg_similarity_scores = {}
+        overall_similarities = []
+
+        for i in range(num_topics):
+            topic_id = list(topic_labels.keys())[i]
+            # Exclude self-similarity
+            similarities = [similarity_matrix[i][j] for j in range(num_topics) if j != i]
+            avg_similarity_scores[topic_id] = np.mean(similarities) if similarities else 0
+            overall_similarities.extend(similarities)
+
+        overall_avg = np.mean(overall_similarities) if overall_similarities else 0
+        return avg_similarity_scores, overall_avg
+
+    except Exception as e:
+        print(f"❌ Error calculating similarity: {e}")
+        return {}, 0
 
 def visualize_embeddings_with_tsne(all_combined_embeddings, combined_labels, combined_topic_labels, combined_model):
     tsne = TSNE(n_components=2, perplexity=30, random_state=42)
@@ -354,7 +482,6 @@ def visualize_embeddings_with_tsne(all_combined_embeddings, combined_labels, com
     plt.ylabel("t-SNE Component 2")
     plt.legend().set_visible(False)
     plt.show()
-
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -531,36 +658,23 @@ def plot_topic_distances(publication_data, combined_labels, publication_keys, te
         print("Cannot reduce embeddings to 2D or no valid embeddings. Skipping plot.")
 
 def visualize_intertopic_distance_map(topic_model, topic_labels):
-    """
-    Visualizes the intertopic distance map using the fitted BERTopic model.
-    """
     try:
-        # Visualize the intertopic distance map
         fig = topic_model.visualize_topics()
 
-        # Update node labels with LLM-generated titles from topic_labels
-        for trace in fig.data:
-            if isinstance(trace, go.Scatter) and trace.mode == 'markers+text':
-                updated_labels = []
-                for label in trace.text:
-                    try:
-                        # Extract topic ID and get the corresponding title
-                        topic_id = int(label.split(')')[0])
-                        updated_label = topic_labels.get(topic_id, label)
-                        updated_labels.append(updated_label)
-                    except (ValueError, IndexError):
-                        # Keep the original label if it cannot be parsed
-                        updated_labels.append(label)
-                trace.text = updated_labels
+        # Update hover data with LLM titles
+        customdata = []
+        for topic_id in topic_model.get_topic_info().Topic:
+            if topic_id == -1:
+                customdata.append(["Outliers"])
+            else:
+                customdata.append([topic_labels.get(topic_id, f"Topic {topic_id}")])
 
-        # Update layout if needed
-        fig.update_layout(
-            title="Intertopic Distance Map with LLM Titles",
-            title_x=0.5  # Center the title
+        fig.update_traces(
+            customdata=customdata,
+            hovertemplate="<b>%{customdata[0]}</b><br>Size: %{marker.size:,}<br>X: %{x}<br>Y: %{y}"
         )
 
         fig.show()
-
     except Exception as e:
         print(f"Error generating intertopic distance map: {e}")
 
@@ -599,16 +713,6 @@ def visualize_clusters(cluster_data_dir, template_sections, publication_data):
             for key in keys:
                 if key in publication_data and publication_data[key]["publication_embedding"] is not None:
                     all_combined_embeddings.append(publication_data[key]["publication_embedding"])
-
-            # Perform visualizations that can be done for each cluster individually
-        #    print(f"Visualizing data for cluster {label}...")
-
-        #    if probabilities_per_document is not None:
-        #        plot_section_topic_distribution(section_probabilities, template_sections)
-
-        #    plot_within_cluster_distances(label, cluster_data["title"], keys, distances, template_sections)
-
-        #    print(f"Visualizations for cluster {label} complete.")
 
     # Perform visualizations that require combined data
     # Check if there are any valid embeddings before proceeding
@@ -653,9 +757,9 @@ def visualize_clusters(cluster_data_dir, template_sections, publication_data):
             fig = px.scatter(df, x='x', y='y', color='cluster', hover_data=['key'],
                              title="t-SNE Visualization of Combined Embeddings with LLM Titles")
 
-            # Customize the hover template to show the key and cluster name
-            fig.update_traces(
-                hovertemplate='<b>Key</b>: %{hovertext}<br><b>Cluster</b>: %{marker.color}<extra></extra>')
+            # Update hover data to include LLM titles
+            hover_data = df.apply(lambda row: f"Key: {row['key']}<br>Cluster: {llm_combined_topic_labels.get(int(row['cluster']), row['cluster'])}", axis=1)
+            fig.update_traces(hovertemplate='%{customdata}', customdata=hover_data)
 
             # Update marker size and opacity for better visualization
             fig.update_traces(marker=dict(size=8, opacity=0.8, line=dict(width=0.5, color='DarkSlateGrey')))
@@ -807,10 +911,10 @@ def plot_within_cluster_distances(labels, keys, publication_data, template_secti
 
         for pub_key in cluster_keys:
             if pub_key in publication_data and "subsection_embeddings" in publication_data[pub_key]:
-                for section_key, section_data in template_sections.items():
+                for section_key, section_data in template_sections.values():
                     for subsection_key in section_data["subsections"].keys():
                         if subsection_key in publication_data[pub_key]["subsection_embeddings"]:
-                            subsection_embedding = publication_data[pub_key]["subsection_embeddings"][subsection_key]
+                            subsection_embedding = publication_data[pub_key]["subsection_embeddings"][subsection_key]['embedding']
                             cluster_subsection_vectors[subsection_key].append(subsection_embedding)
 
         avg_subsection_vectors = {
@@ -824,7 +928,7 @@ def plot_within_cluster_distances(labels, keys, publication_data, template_secti
             if pub_key in publication_data and "subsection_embeddings" in publication_data[pub_key]:
                 for subsection_key, avg_vector in avg_subsection_vectors.items():
                     if subsection_key in publication_data[pub_key]["subsection_embeddings"]:
-                        subsection_embedding = publication_data[pub_key]["subsection_embeddings"][subsection_key]
+                        subsection_embedding = publication_data[pub_key]["subsection_embeddings"][subsection_key]['embedding']
                         distance = cosine_distances([subsection_embedding], [avg_vector])[0][0]
                         distances.append(distance)
 
@@ -835,3 +939,121 @@ def plot_within_cluster_distances(labels, keys, publication_data, template_secti
         plt.ylabel("Number of Subsections")
         plt.grid(True)
         plt.show()
+
+def evaluate_publications_against_criteria(publication_data, cluster_analysis_dir, template_sections):
+    cluster_evaluations = {}
+
+    for filename in os.listdir(cluster_analysis_dir):
+        if filename.startswith("cluster_") and filename.endswith(".json"):
+            filepath = os.path.join(cluster_analysis_dir, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                cluster_data = json.load(f)
+
+            cluster_label = cluster_data["label"]
+            cluster_criteria = cluster_data["description"]
+
+            # Convert section_probabilities to a dictionary
+            section_probabilities_dict = {
+                section_key: dict(counts)
+                for section_key, counts in cluster_data["section_probabilities"].items()
+            }
+
+            # Extract subsection names from template_sections
+            subsection_names = []
+            for section_key, section_data in template_sections.items():
+                for subsection_key, subsection_name in section_data["subsections"].items():
+                    subsection_names.append(subsection_name)
+
+            cluster_evaluations[cluster_label] = []
+
+            for pub_key in cluster_data["keys"]:
+                if pub_key in publication_data:
+                    publication = publication_data[pub_key]
+
+                    evaluation_results = {}
+
+                    # Example: Calculate a score based on the presence and probability of each subsection
+                    for subsection_name in subsection_names:
+                        subsection_score = 0
+                        for section_key, section_data in template_sections.items():
+                            if subsection_name in section_data["subsections"].values():
+                                subsection_key = list(section_data["subsections"].keys())[list(section_data["subsections"].values()).index(subsection_name)]
+                                if section_key in publication["answers"] and subsection_key in publication["answers"][section_key]:
+                                    if publication["answers"][section_key][subsection_key]:
+                                        # Check if probabilities_per_document is available and use it
+                                        if cluster_data["probabilities_per_document"]:
+                                            # Find the index of the publication in the cluster keys
+                                            pub_index = cluster_data["keys"].index(pub_key)
+                                            # Ensure the index is within the bounds of probabilities_per_document
+                                            if pub_index < len(cluster_data["probabilities_per_document"]):
+                                                topic_probs = cluster_data["probabilities_per_document"][pub_index]
+                                                # Find the probability for the current cluster label
+                                                topic_prob = topic_probs[cluster_label] if cluster_label < len(topic_probs) else 0
+                                                subsection_score = topic_prob  # Use probability as the score
+                                            else:
+                                                print(f"Warning: Index {pub_index} is out of bounds for probabilities_per_document in cluster {cluster_label}.")
+                                        else:
+                                            subsection_score = 1  # Full score if present and probabilities are not used
+                                        break  # Found the subsection, no need to continue searching
+                        evaluation_results[subsection_name] = subsection_score
+
+                    # Add evaluation results to cluster_evaluations
+                    cluster_evaluations[cluster_label].append(evaluation_results)
+
+    # Create radar charts for all clusters in one figure with subplots
+    n_clusters = len(cluster_evaluations)
+    if n_clusters > 0:
+        # Define the grid layout based on the number of clusters
+        if n_clusters <= 3:
+            rows, cols = 1, n_clusters
+        elif n_clusters == 4:
+            rows, cols = 2, 2
+        elif n_clusters <= 6:
+            rows, cols = 2, 3
+        elif n_clusters <= 9:
+            rows, cols = 3, 3
+        else:
+            rows, cols = (n_clusters + 3) // 4, 4  # Ensure at least 4 columns
+
+        fig, axs = plt.subplots(rows, cols, figsize=(5 * cols, 5 * rows), subplot_kw=dict(polar=True))
+        axs = axs.flatten()
+
+        # Ensure axs is iterable even if there's only one subplot
+        if n_clusters == 1:
+            axs = [axs]
+
+        for i, (cluster_label, evaluations) in enumerate(cluster_evaluations.items()):
+            if not evaluations:
+                print(f"No evaluations found for cluster {cluster_label}. Skipping radar chart.")
+                continue
+            ax = axs[i]
+            # Calculate average scores for each criterion
+            avg_evaluation = {}
+            for key in evaluations[0].keys():
+                avg_evaluation[key] = np.mean([e[key] for e in evaluations if key in e])
+
+            # Create radar chart data
+            categories = list(avg_evaluation.keys())
+            values = list(avg_evaluation.values())
+
+            # Close the loop for the radar chart
+            values += values[:1]
+            categories += categories[:1]
+
+            # Create radar chart
+            ax.plot(np.linspace(0, 2 * np.pi, len(categories)), values, marker='o', linestyle='-', color='skyblue', linewidth=2, markersize=8)
+            ax.fill(np.linspace(0, 2 * np.pi, len(categories)), values, color='skyblue', alpha=0.25)
+
+            # Set title and labels
+            ax.set_title(f"Cluster {cluster_label}", size=12, color='black', y=1.1)
+            ax.set_xticks(np.linspace(0, 2 * np.pi, len(categories)))
+            ax.set_xticklabels(categories, color='black', size=10)
+            ax.set_yticks([0.2, 0.4, 0.6, 0.8, 1.0])
+            ax.set_yticklabels(["0.2", "0.4", "0.6", "0.8", "1.0"], color='black', size=8)
+            ax.set_ylim(0, 1)
+            ax.grid(True, linestyle='--', alpha=0.6)
+
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("No clusters found for evaluation.")
