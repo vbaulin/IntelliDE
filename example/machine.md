@@ -450,7 +450,8 @@ N/A
 
 ### **14.1. CT-GIN Knowledge Graph:**
 * **Content:**
-[__A simple schematic diagram of the CT-GIN Knowledge Graph for this paper would include the following elements:
+
+![](cells.png)
 
 **Nodes:**
 
