@@ -311,16 +311,15 @@ project_root/
     *   Create a `.env` file in the root directory of the project.
     *   Obtain API keys for your chosen LLM provider(s):
         *   **OpenRouter:** Obtain an API key from the OpenRouter website.
-        *   **Google Gemini:** Obtain an API key from Google AI Studio.
     *   Add the API keys to your `.env` file:
 
         ```
         OPENROUTER_API_KEY=your_openrouter_api_key
-        GEMINI_API_KEY=your_gemini_api_key
         ```
-    *   **Choose LLM:** In `main.py`, set the `LLM_PROVIDER` constant to either `"openrouter"` or `"google"`.
+    *   **Choose LLM:** In `main.py`, set the `LLM_PROVIDER` constant "openrouter"`.
 
-5.  **Place PDF Files:** Place the PDF files you want to analyze in the `../AI-4/` directory with corresponding bib file created by Zotero. For this export collection from Zotero library with PDFs included.
+5.  **Place PDF Files:** Place the PDF files you want to analyze in the `PDFs/AI-4/` directory with corresponding bib file created by Zotero. For this export collection from Zotero library with PDFs included.
+    *   Create a BibTeX file (e.g., `AI-4.bib`) in the `PDFs/AI-4/`
 
 ## Usage
 
@@ -337,7 +336,7 @@ This script will:
 1.  Load the CT-GIN template (`paper6GIN_10.md`).
 2.  Load LLM prompt template (`prompts/analyze_paper.txt`)
 3.  Load the existing vector database (if any).
-4.  Load bib file and iterate through all PDF files in the `../AI-4/` directory (and its subdirectories with fies).
+4.  Load bib file and iterate through all PDF files in the `PDFs/AI-4/` directory (and its subdirectories with fies).
 5.  For each PDF:
     *   Extract the text.
     *   Extract paper type
@@ -346,7 +345,7 @@ This script will:
     *   Parse the LLM's Markdown output.
     *   Generate SciBERT embeddings for the publication, sections, subsections, and probes.
     *   Store the extracted data (text, scores, embeddings, metadata) in the vector database.
-    *   Save the raw Markdown output to a file in the `../synthetic/publications6GIN10/` directory.
+    *   Save the raw Markdown output to a file in the `synthetic/publications6GIN10/` directory.
 6.  Load vector cache for BERTopic analysis.
 7.  Run BERTopic analysis.
 8. Save the updated cache.
@@ -376,44 +375,3 @@ It also generates topic hierarchy plot, enhanced with LLM titles, presents a tre
 A topic frequency plot displays the prevalence of each identified topic using a bar chart, with a clear distinction between the frequency of topics in the entire dataset and in the dataset excluding outliers (topic -1), providing insights into the core themes and the presence of noise.  Lastly, radar charts are used to evaluate publications against predefined criteria relevant to material intelligence (such as the presence of specific sections or keywords extracted from the documents), with each cluster represented in a separate subplot showing the average scores across multiple evaluation criteria, effectively summarizing each cluster's alignment with aspects of intelligent behavior in soft matter.
 
 
-## Dependencies
-
-The project requires the following Python libraries:
-
-*   `numpy`
-*   `torch`
-*   `transformers`
-*    `scikit-learn`
-*    `pathlib`
-*    `bibtexparser`
-*   `pdfplumber`
-*   `openai`
-*   `backoff`
-*   `python-dotenv`
-*    `google-generativeai`
-*   `tqdm`
-*   `sentence_transformers`
-*    `bertopic`
-*    `umap-learn`
-*   `matplotlib`
-*    `networkx`
-*    `seaborn`
-*   `plotly`
-*   `pandas`
-*   `scipy`
-*   `textblob`
-
-These can be installed using `pip install -r requirements.txt`.
-
-## Contributing
-
-Contributions to this project are welcome! Please follow these guidelines:
-
-1.  Fork the repository.
-2.  Create a new branch for your feature or bug fix.
-3.  Make your changes and commit them with clear, descriptive messages.
-4.  Submit a pull request.
-
-## License
-
-This project is licensed under the MIT License - see the `LICENSE` file for details.
