@@ -35,7 +35,7 @@ def get_openrouter_client():
 # Exponential backoff decorator for handling rate limits
 @backoff.on_exception(
     backoff.expo,
-    (Exception),  
+    (Exception),
     max_tries=5,  # Maximum number of retries
     max_time=300,  # Maximum total time to try in seconds
     giveup=lambda e: not (isinstance(e, Exception) and

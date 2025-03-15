@@ -12,10 +12,13 @@ from pathlib import Path
 import bibtexparser
 from bibtexparser.bparser import BibTexParser
 import pdfplumber
+import plotly.graph_objects as go
+import plotly.express as px
 
 
 EMBEDDING_CACHE_DIR = ".embedding_cache"
 EMBEDDING_CACHE_FILE = os.path.join(EMBEDDING_CACHE_DIR, "embeddings_cache.pkl")
+VISUALIZATION_DIR = "visualization_results" #visualization dir
 
 # --- Helper Functions ---
 def setup_logging(name=__name__):
@@ -342,78 +345,201 @@ def filter_vectors(
     else:
         return filtered_keys
 
+
 def parse_markdown_output(markdown_text: str) -> Dict[str, Any]:
-    """Parses Markdown, extracting sections, subsections, probes, scores, and justifications."""
+    """
+    Parses Markdown, extracting sections, subsections, and metadata,
+    handling tables, and excluding metadata/notes from text content.
+    """
     logger = logging.getLogger(__name__)
     logger.debug("--- Starting parse_markdown_output (REVISED LOGIC) ---")
     sections = {}
     current_section = None
     current_subsection = None
-    current_probe = None
-    subsection_regex = r"^###\s+\**(\d*\.*\d*\s*[\w\s\d\.\:\-]+?)\**(?:\s|$)"
+    current_level = 0  # Track heading level (## = 2, ### = 3, etc.)
+    in_table = False  # Flag to indicate if we are inside a table
+    table_lines = []
 
     lines = markdown_text.splitlines()
-
-    for line_number, line in enumerate(lines, 1):
+    for line in lines:
         stripped_line = line.strip()
-        original_line = line  # Keep original line for text accumulation
-        logger.debug(f"Line {line_number}: '{stripped_line}'")
+        original_line = line
 
-        # Match Section (##)
-        if section_match := re.match(r"^##\s+(.+)$", stripped_line):
-            current_section = section_match.group(1).strip()
-            sections[current_section] = {
-                "subsections": {},
-                "text": ""  # Initialize section text
-            }
-            current_subsection = None
-            current_probe = None
-            logger.debug(f"✅ Section MATCH: '{current_section}'")
+        # --- Table Handling ---
+        if stripped_line.startswith('|') and stripped_line.endswith('|'):
+            if not in_table:
+                in_table = True
+                table_lines = []  # Start a new table
+            table_lines.append(stripped_line)
+            continue #go to next line
+        elif in_table:  # Finished table
+            # Parse accumulated table lines
+            parsed_table = parse_table(table_lines)
+            if parsed_table:
+                if current_subsection:
+                    if "tables" not in sections[current_section]["subsections"][current_subsection]["metadata"]:
+                         sections[current_section]["subsections"][current_subsection]["metadata"]["tables"] = []
+                    sections[current_section]["subsections"][current_subsection]["metadata"]["tables"].append(parsed_table)
+                elif current_section:
+                    if "tables" not in sections[current_section]["metadata"]:
+                        sections[current_section]["metadata"]["tables"] = []
+                    sections[current_section]["metadata"]["tables"].append(parsed_table)
+            in_table = False
+            # We have to re-evaluate the line
+        # Match Headings (any level)
+        heading_match = re.match(r"^(#+)\s+(.+)$", stripped_line)
+        if heading_match:
+            level = len(heading_match.group(1))  # Number of '#' characters
+            title = heading_match.group(2).strip()
+            logger.debug(f"Found heading: Level {level}, Title: {title}")
+
+            if level == 2:  # Section (##)
+                current_section = title
+                sections[current_section] = {"subsections": {}, "text": "", "metadata": {}}
+                current_subsection = None
+                current_level = level
+            elif level > 2 and current_section:  # Subsection (### or deeper)
+                if level == current_level + 1:  # Direct subsection
+                    current_subsection = title
+                    sections[current_section]["subsections"][current_subsection] = {"text": "", "metadata": {}, "content": []} #content is added
+                    current_level = level
+                elif level <= current_level:  # Higher-level subsection or same level
+                    # Find the correct parent
+                    current_level = level
+                    parts = title.split('.')
+                    current_subsection = title
+                    #This needs to be improved, to go to upper levels correctly.
+                    sections[current_section]["subsections"][current_subsection] = {"text": "", "metadata": {}, "content": []}
+                else:
+                    logger.warning(f"Skipping heading (invalid level): {line}")
+            continue  # Skip to the next line after processing a heading
+
+
+        # --- Metadata Extraction ---
+        metadata_match = re.match(r"^\*\s+\*\*([^:]+):\*\*\s*(.*)$", stripped_line)  # Matches "*   **Key:** Value"
+        if metadata_match:
+            key = metadata_match.group(1).strip()
+            value = metadata_match.group(2).strip()
+            logger.debug(f"Found metadata: Key: {key}, Value: {value}")
+
+            if current_subsection:
+                sections[current_section]["subsections"][current_subsection]["metadata"][key] = value
+            elif current_section:
+                sections[current_section]["metadata"][key] = value
+            continue  # Don't add metadata lines to the text content
+
+        # --- CT-GIN Mapping Extraction ---
+        ctgin_match = re.match(r"^\s*CT-GIN Mapping:\s*(.*)$", stripped_line, re.IGNORECASE)
+        if ctgin_match:
+            ctgin_value = ctgin_match.group(1).strip()
+            logger.debug(f"Found CT-GIN Mapping: {ctgin_value}")
+            if current_subsection:
+                sections[current_section]["subsections"][current_subsection]["metadata"]["CT-GIN Mapping"] = ctgin_value
+            elif current_section:
+                sections[current_section]["metadata"]["CT-GIN Mapping"] = ctgin_value
             continue
 
-        # Match Subsection (###)
-        if current_section and (subsection_match := re.match(subsection_regex, stripped_line)):
-            current_subsection = subsection_match.group(1).strip()
-            sections[current_section]["subsections"][current_subsection] = {
-                "probes": {},
-                "text": ""  # Initialize subsection text
-            }
-            current_probe = None
-            logger.debug(f"  ✅ Subsection MATCH: '{current_subsection}'")
+        # --- Implicit/Explicit Extraction ---
+        implicit_explicit_match = re.match(r"^\s*Implicit/Explicit:\s*(.*)$", stripped_line, re.IGNORECASE)
+        if implicit_explicit_match:
+            ie_value = implicit_explicit_match.group(1).strip()
+            logger.debug(f"Found Implicit/Explicit: {ie_value}")
+            if current_subsection:
+                sections[current_section]["subsections"][current_subsection]["metadata"]["Implicit/Explicit"] = ie_value
+            elif current_section:
+                sections[current_section]["metadata"]["Implicit/Explicit"] = ie_value
             continue
 
-        # Match Probe (####)
-        if current_section and current_subsection and (probe_match := re.match(r"^####\s*(.+?)\s*$", stripped_line)):
-            current_probe = probe_match.group(1).strip()
-            sections[current_section]["subsections"][current_subsection]["probes"][current_probe] = {
-                "text": "",
-                "score": None,
-                "justification": ""
-            }
-            logger.debug(f"    ✅ Probe MATCH: '{current_probe}'")
+        # --- Skip "Note" Sections ---
+        if stripped_line.lower().startswith("*note:*"):  #added to remove notes
             continue
+        # --- Text Accumulation (Excluding Metadata and Specific Markers) ---
 
-        # Text accumulation logic
-        if current_probe:
-            # Add to probe text
-            sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["text"] += original_line + "\n"
-            logger.debug(f"      📝 Probe text: {current_probe}")
+        # Remove specific in-line markers and phrases:
+        line = re.sub(r"^\s*\*\s+Content:\s*", "", line)
+        line = re.sub(r"^\s*\*\s+Justification:?\s*", "", line)
+        line = re.sub(r"^\s*\*\s+Score:\s*\[?\d+\]?", "", line)
+        line = re.sub(r"^\s*\*\s+Value:\s*", "", line)
+        line = re.sub(r"^\s*\*\s+Units:\s*", "", line)
+        line = re.sub(r"^\s*\*\s+Source \([^)]*\):", "", line)
+        line = re.sub(r"^\s*\*\s+Data Source.*?:", "", line)
+        line = re.sub(r"^\s*\*\s+Data Reliability.*?:", "", line)
+        line = re.sub(r"^\s*\*\s+Derivation Method.*?:", "", line)
+        line = re.sub(r"`[^`]*`", "", line)  # Remove inline code (like `SystemNode`)
+        line = re.sub(r'N/A', '', line) #remove N/A
+        line = re.sub(r'\[Unclear\]', '', line)  # Remove [Unclear]
+        # Remove entire Implicit/Explicit and CT-GIN Mapping lines:
+        line = re.sub(r"^\s*Implicit/Explicit:.*$", "", line, flags=re.MULTILINE) #remove those lines
+        line = re.sub(r"^\s*CT-GIN Mapping:.*$", "", line, flags=re.MULTILINE) #remove those lines
 
-            # Extract score and justification ONLY if we are inside a probe
-            if score_match := re.search(r"Score:\s*(\d+)", original_line):
-                sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["score"] = int(score_match.group(1))
-            if justification_match := re.search(r"Justification:\s*(.*)", original_line, re.IGNORECASE):
-                sections[current_section]["subsections"][current_subsection]["probes"][current_probe]["justification"] = justification_match.group(1).strip()
-
-        elif current_subsection:
+        # Remove table formatting characters, but keep the content:
+        line = re.sub(r'[\|\-]+', ' ', line)  # Replace |, -, with spaces
+        line = re.sub(r'\s+', ' ', line)
+        if current_subsection:
             # Add to subsection text
-            sections[current_section]["subsections"][current_subsection]["text"] += original_line + "\n"
+            sections[current_section]["subsections"][current_subsection]["text"] += line + "\n"
             logger.debug(f"    📝 Subsection text: {current_subsection}")
 
         elif current_section:
             # Add to section text
-            sections[current_section]["text"] += original_line + "\n"
+            sections[current_section]["text"] += line + "\n"
             logger.debug(f"  📝 Section text: {current_section}")
+
 
     logger.debug(f"Parsing complete. Found {len(sections)} sections")
     return sections
+
+def parse_table(table_lines: List[str]) -> List[Dict]:
+    """Parses a Markdown table into a list of dictionaries."""
+    #Very simple table parsing
+    table_data = []
+    header = []
+    first = True
+    for line in table_lines:
+        values = [v.strip() for v in line.split('|') if v.strip()] # Split by |, and strip
+        if first:
+            header = values
+            first = False
+        else:
+            if len(values) == len(header):  # Ensure correct number of columns
+               table_data.append(dict(zip(header, values))) #create dict
+    return table_data
+
+def read_markdown_file(filepath):
+    """
+    Reads the content of a markdown file.
+
+    Args:
+        filepath: Path to the markdown file.
+
+    Returns:
+        The content of the file as a string, or None if an error occurred.
+    """
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        print(f"❌ Error: Markdown file not found at {filepath}")
+        return None
+    except Exception as e:
+        print(f"❌ Error reading markdown file: {e}")
+        return None
+
+def save_visualization(fig, filename):
+    """Saves a Plotly figure to a file (HTML and PNG)."""
+    filepath_html = os.path.join(VISUALIZATION_DIR, f"{filename}.html")
+    filepath_png = os.path.join(VISUALIZATION_DIR, f"{filename}.png")
+
+    os.makedirs(VISUALIZATION_DIR, exist_ok=True)  # Ensure directory exists
+    try:
+        if isinstance(fig, go.Figure):
+          fig.write_html(filepath_html)
+          fig.write_image(filepath_png)
+        elif isinstance(fig, px.Figure):
+            fig.write_html(filepath_html)
+            fig.write_image(filepath_png)
+        else: #if not plotly figure
+            return
+
+    except Exception as e:
+        print(f"❌ Error saving visualization: {e}")

@@ -32,7 +32,7 @@ from utils import (
 from OpenRouter_Methods import get_llm_response
 
 # Import BERTopic related functions
-from analysis import perform_bertopic_analysis, analyze_clusters, save_topic_tree_to_markdown, calculate_average_similarity, visualize_intertopic_distance_map, visualize_topic_hierarchy, visualize_topic_similarity
+#from analysis import perform_bertopic_analysis, analyze_clusters, save_topic_tree_to_markdown, calculate_average_similarity, visualize_intertopic_distance_map, visualize_topic_hierarchy, visualize_topic_similarity
 
 # Import vector-related functions and classes
 from vector_fns import (
@@ -60,16 +60,16 @@ from vector_fns import (
 )
 
 # Constants
-TEMPLATE_FILE = "../Catechism/paper6GIN_10.md"
+TEMPLATE_FILE = "Catechism/paper6GIN_10.md"
 PROMPT_FILE = "prompts/analyze_paper.txt"
-OUTPUT_DIR = "../synthetic/publications6GIN10"
-INPUT_DIR = "../AI-4/"
+OUTPUT_DIR = "synthetic/reports"
+INPUT_DIR = "PDFs/AI-4/"
 LLM_PROVIDER: Literal["google", "openrouter"] = "openrouter"
 EMBEDDING_CACHE_DIR = ".embedding_cache"
 VECTOR_CACHE_FILE = os.path.join(EMBEDDING_CACHE_DIR, "vectors_cache.pkl")
 MAX_LLM_RETRIES = 5
 CLUSTER_ANALYSIS_OUTPUT_DIR = "cluster_analysis_results"
-PERSPECTIVE_FILE = "../Catechism/Perspective2.md"
+PERSPECTIVE_FILE = "Catechism/Perspective2.md"
 VISUALIZATION_DIR = "visualization_results"
 
 
@@ -180,7 +180,7 @@ def main():
             logger.info(f"📄 Markdown found for {key}. Processing from Markdown.")
             with open(markdown_file, "r", encoding="utf-8") as f:
                 analysis_text = f.read()
-            publication_data = {
+            publication_data = { #publication data if markdown file exists
                 "key": key, "title": data.get("title", key), "content": analysis_text,
                 "pdf_path": data.get('pdf_path'), "year": data.get("year"),
                 "doi": data.get("doi"), "authors": data.get("authors"),
@@ -198,7 +198,7 @@ def main():
             pdf_path = data.get('pdf_path')
             text_content = extract_pdf_text(pdf_path) if pdf_path and os.path.exists(pdf_path) else data.get("title", key)
             paper_type = extract_paper_type(text_content) if text_content != data.get("title", key) else "Unknown"
-            publication_data = {"key": key, "title": data.get("title"), "content": text_content,
+            publication_data = {"key": key, "title": data.get("title"), "content": text_content, #publication data if not markdown
                 "pdf_path": pdf_path, "year": data.get("year"), "doi": data.get("doi"),
                 "authors": data.get("authors"), "paper_type": paper_type, "bibtex_data": data,}
             logger.debug(f"  PDF content extracted for {key}: {text_content[:100]}...")  # Log part of the content
@@ -263,4 +263,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
